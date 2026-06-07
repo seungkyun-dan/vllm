@@ -82,6 +82,27 @@ CUDA_VISIBLE_DEVICES=1 MAX_NUM_SEQS=64 MAX_NUM_BATCHED_TOKENS=4096 \
 SAVE_DETAILED=1 profiles/spec_decode_qwen3/run_sweep.sh
 ```
 
+## Nsight Forward Timing Sweep
+
+Use `run_nsys_forward_sweep.sh` when you want component timing rather than throughput. It launches the server under `nsys`, enables vLLM's CUDA profiler only around the benchmark window, exports SQLite, and extracts NVTX ranges.
+
+```bash
+K_VALUES="0 1 2 3 4 6" LOAD_MODE=concurrency LOAD_VALUE=1 \
+  NUM_PROMPTS=32 profiles/spec_decode_qwen3/run_nsys_forward_sweep.sh
+```
+
+The key outputs are under `profiles/spec_decode_qwen3/nsys_results/<run_id>/`:
+
+- `nsys/*.nsys-rep` and `nsys/*.sqlite`: raw Nsight reports.
+- `stats/k*/k*_nvtx_summary.csv`: grouped CPU-side NVTX range durations by component and phase.
+- `stats/k*/nsys_nvtx_gpu_proj_sum.csv`: Nsight GPU-projected time by NVTX range.
+- `stats/k*/nsys_nvtx_gpu_proj_trace.csv`: per-instance GPU-projected range rows.
+- `stats/k*/nsys_nvtx_kern_sum.csv`: CUDA kernel time summarized by NVTX range.
+- `stats/k*/k*_nvtx_events.csv`: per-range rows for `gpu_model_runner:*` ranges.
+- `bench_results/*.json`: benchmark metrics for the same profiled window.
+
+For prefill/decode/mixed classification, the extractor uses vLLM's profiler annotation of each iteration: `execute_context_<requests>(<tokens>)_generation_<requests>(<tokens>)`. Target model work is `gpu_model_runner: forward`; draft model work is `gpu_model_runner: draft`.
+
 ## Output Layout
 
 Each run writes a timestamped directory under
@@ -97,6 +118,7 @@ Each run writes a timestamped directory under
 - `gpu/*.csv`: `nvidia-smi` snapshots after each benchmark point, if available.
 - `summary.csv`: normalized summary across all JSON result files.
 - `summary.jsonl`: one normalized JSON object per benchmark point.
+- `plots/*.svg` and `plots.html`: generated plots for throughput, latency, and speculative acceptance.
 
 The summary includes latency percentiles, throughput, goodput when configured,
 and existing speculative decoding acceptance metrics reported by `vllm bench

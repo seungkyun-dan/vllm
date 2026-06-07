@@ -385,5 +385,7 @@ done
 
 stop_server
 "${SCRIPT_DIR}/summarize_results.sh" "${RESULT_DIR}"
+"${SCRIPT_DIR}/plot_results.sh" "${RESULT_DIR}" || true
 echo "Done. Summary: ${RESULT_DIR}/summary.csv"
+echo "Done. Plots: ${RESULT_DIR}/plots.html"
 
