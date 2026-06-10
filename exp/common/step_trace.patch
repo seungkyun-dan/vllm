@@ -1,0 +1,76 @@
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+index 889232c3e..0e4ecd683 100644
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -1,6 +1,8 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import itertools
++import json
++import os
+ import time
+ from collections import defaultdict, deque
+ from collections.abc import Iterable
+@@ -99,6 +101,7 @@ class Scheduler(SchedulerInterface):
+             defaultdict(set) if include_finished_set else None
+         )
+         self.prev_step_scheduled_req_ids: set[str] = set()
++        self.step_trace_path = os.environ.get("VLLM_STEP_TRACE")
+ 
+         # Scheduling constraints.
+         self.max_num_running_reqs = self.scheduler_config.max_num_seqs
+@@ -962,10 +965,54 @@ class Scheduler(SchedulerInterface):
+             )
+             scheduler_output.ec_connector_metadata = ec_meta
+ 
++        self._trace_step(num_scheduled_tokens, total_num_scheduled_tokens)
++
+         with record_function_or_nullcontext("schedule: update_after_schedule"):
+             self._update_after_schedule(scheduler_output)
+         return scheduler_output
+ 
++    def _trace_step(
++        self,
++        num_scheduled_tokens: dict[str, int],
++        total_num_scheduled_tokens: int,
++    ) -> None:
++        if not self.step_trace_path:
++            return
++
++        prefill_tokens = 0
++        decode_reqs = 0
++        for req_id, num_tokens in num_scheduled_tokens.items():
++            request = self.requests.get(req_id)
++            if request is None:
++                continue
++            prompt_remaining = max(
++                request.num_prompt_tokens - request.num_computed_tokens, 0
++            )
++            req_prefill_tokens = min(num_tokens, prompt_remaining)
++            prefill_tokens += req_prefill_tokens
++            if num_tokens > req_prefill_tokens:
++                decode_reqs += 1
++
++        with open(self.step_trace_path, "a", encoding="utf-8") as trace_file:
++            trace_file.write(
++                json.dumps(
++                    {
++                        "ts": time.time(),
++                        "step_id": self.current_step,
++                        "total_scheduled_tokens": total_num_scheduled_tokens,
++                        "prefill_tokens": prefill_tokens,
++                        "decode_reqs": decode_reqs,
++                        "num_running": len(self.running),
++                        "num_waiting": len(self.waiting)
++                        + len(self.skipped_waiting)
++                        - self.num_waiting_for_streaming_input,
++                        "kv_usage": self.kv_cache_manager.usage,
++                    },
++                    separators=(",", ":"),
++                )
++                + "\n"
++            )
++
+     def _build_kv_connector_meta(
+         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
+     ) -> KVConnectorMetadata:
