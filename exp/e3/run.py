@@ -258,7 +258,7 @@ def _run_target_cell(
     summary_path = cell / "target.summary.json"
     prompt_meta_path = cell / "target.prompt.json"
     host = "127.0.0.1"
-    port = find_free_port(host)
+    port = args.port if args.port is not None else find_free_port(host)
     base_url = f"http://{host}:{port}"
     serve_cmd = _serve_cmd(
         args, host=host, port=port, nsys_report_stem=nsys_report_stem
@@ -370,7 +370,7 @@ def _run_overlap_cell(
     draft_records = cell / "draft.jsonl"
     draft_summary = cell / "draft.summary.json"
     host = "127.0.0.1"
-    port = find_free_port(host)
+    port = args.port if args.port is not None else find_free_port(host)
     base_url = f"http://{host}:{port}"
     serve_cmd = _serve_cmd(
         args, host=host, port=port, nsys_report_stem=nsys_report_stem
@@ -533,6 +533,7 @@ def main() -> None:
     parser.add_argument("--target-model", default="Qwen/Qwen3-8B")
     parser.add_argument("--draft-model", default="Qwen/Qwen3-0.6B")
     parser.add_argument("--served-model-name", default="target")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--target-tp", type=int, default=1)
     parser.add_argument("--draft-tp", type=int, default=1)
     parser.add_argument("--concurrency", type=int, default=32)

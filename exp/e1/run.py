@@ -177,7 +177,7 @@ def _run_arm(
     speculative_config: dict[str, Any] | None = None,
 ) -> None:
     host = args.host
-    port = find_free_port(host)
+    port = args.port if args.port is not None else find_free_port(host)
     base_url = f"http://{host}:{port}"
     trace_path = run_dir / "raw" / f"trace_{metadata['request_group']}.jsonl"
     log_path = run_dir / "raw" / f"server_{metadata['request_group']}.log"
@@ -251,6 +251,7 @@ def main() -> None:
     parser.add_argument("--tp-target", type=int, default=1)
     parser.add_argument("--tp-drafts", default="1")
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument(
         "--capabilities", type=Path, default=Path("results/capabilities.json")
