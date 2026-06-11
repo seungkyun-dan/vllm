@@ -1,0 +1,277 @@
+{
+  "defaults": {
+    "target_model": "Qwen/Qwen3-8B",
+    "draft_model": "Qwen/Qwen3-0.6B",
+    "backend": "openai-chat",
+    "dataset_name": "random",
+    "temperature": 0,
+    "port": 8000,
+    "max_model_len": 4096,
+    "gpu_memory_utilization": 0.9,
+    "max_num_seqs": 256,
+    "num_prompts_small": 128,
+    "num_prompts_large": 512
+  },
+  "phases": {
+    "phase0": {
+      "description": "Environment, server, benchmark, and trace smoke test.",
+      "runs": [
+        {
+          "k": 0,
+          "input_len": 128,
+          "output_len": 16,
+          "num_prompts": 8,
+          "max_concurrency": 1,
+          "max_num_batched_tokens": 2048,
+          "chunked_prefill": "default"
+        }
+      ]
+    },
+    "phase1": {
+      "description": "Serving-level phase microbenchmark preparation.",
+      "prefill_like": {
+        "k": 0,
+        "input_len": [
+          128,
+          512,
+          1024,
+          2048
+        ],
+        "output_len": 1,
+        "batch_size": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32
+        ],
+        "chunked_prefill": "off"
+      },
+      "decode_like_serving_approximation": {
+        "k": 0,
+        "input_len": [
+          128,
+          1024
+        ],
+        "output_len": 128,
+        "max_concurrency": [
+          1,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256
+        ]
+      }
+    },
+    "phase2": {
+      "description": "Vanilla target-only closed-loop concurrency sweep.",
+      "cases": [
+        {
+          "name": "short_prompt_baseline",
+          "k": 0,
+          "input_len": 128,
+          "output_len": 128,
+          "max_concurrency": [
+            1,
+            8,
+            32,
+            64,
+            128
+          ],
+          "max_num_batched_tokens": 8192,
+          "max_num_seqs": 256,
+          "chunked_prefill": [
+            "on",
+            "off"
+          ],
+          "num_prompts": 512
+        },
+        {
+          "name": "long_prompt_stress",
+          "k": 0,
+          "input_len": 1024,
+          "output_len": 256,
+          "max_concurrency": [
+            1,
+            8,
+            32,
+            64,
+            128
+          ],
+          "max_num_batched_tokens": 2048,
+          "max_num_seqs": 256,
+          "chunked_prefill": [
+            "on",
+            "off"
+          ],
+          "num_prompts": 512
+        }
+      ]
+    },
+    "phase3": {
+      "description": "Vanilla token budget sweep for long prompts.",
+      "matrix": {
+        "k": 0,
+        "input_len": 1024,
+        "output_len": 256,
+        "max_concurrency": [
+          32,
+          64
+        ],
+        "max_num_batched_tokens": [
+          2048,
+          4096,
+          8192,
+          16384
+        ],
+        "max_num_seqs": 256,
+        "chunked_prefill": [
+          "on",
+          "off"
+        ],
+        "num_prompts": 512
+      }
+    },
+    "phase4": {
+      "description": "Input length sweep for prefill pressure.",
+      "matrix": {
+        "k": 0,
+        "input_len": [
+          128,
+          512,
+          1024,
+          2048
+        ],
+        "output_len": 256,
+        "max_concurrency": [
+          32
+        ],
+        "optional_max_concurrency": [
+          64
+        ],
+        "max_num_batched_tokens": [
+          2048,
+          8192
+        ],
+        "max_num_seqs": 256,
+        "chunked_prefill": [
+          "on"
+        ],
+        "num_prompts": 512
+      }
+    },
+    "phase5": {
+      "description": "Output length and speculative amortization sweep.",
+      "vanilla_output_length_sweep": {
+        "k": 0,
+        "input_len": 1024,
+        "output_len": [
+          16,
+          32,
+          64,
+          128,
+          256
+        ],
+        "max_concurrency": 32,
+        "max_num_batched_tokens": [
+          2048,
+          8192
+        ],
+        "chunked_prefill": [
+          "on"
+        ],
+        "num_prompts": 512
+      },
+      "speculative_k_sweep": {
+        "k": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "input_len": 1024,
+        "output_len": [
+          16,
+          64,
+          256
+        ],
+        "max_concurrency": 32,
+        "max_num_batched_tokens": [
+          2048,
+          8192
+        ],
+        "chunked_prefill": [
+          "on"
+        ],
+        "num_prompts": 256
+      }
+    },
+    "phase6": {
+      "description": "Open-loop request-rate sweep for arrival pressure.",
+      "request_rate_source": {
+        "explicit_env": "REQUEST_RATES",
+        "capacity_env": "CAPACITY_C",
+        "capacity_multipliers": [
+          0.25,
+          0.5,
+          0.75,
+          1.0,
+          1.25
+        ],
+        "placeholder_rates": [
+          1,
+          2,
+          4,
+          8,
+          16
+        ]
+      },
+      "cases": [
+        {
+          "name": "short_prompt_open_loop",
+          "k": 0,
+          "input_len": 128,
+          "output_len": 128,
+          "request_rate": [
+            "0.25C",
+            "0.5C",
+            "0.75C",
+            "1.0C",
+            "1.25C"
+          ],
+          "max_num_batched_tokens": 8192,
+          "max_num_seqs": 256,
+          "chunked_prefill": [
+            "on"
+          ],
+          "num_prompts": 1024
+        },
+        {
+          "name": "long_prompt_open_loop",
+          "k": 0,
+          "input_len": 1024,
+          "output_len": 256,
+          "request_rate": [
+            "0.25C",
+            "0.5C",
+            "0.75C",
+            "1.0C",
+            "1.25C"
+          ],
+          "max_num_batched_tokens": [
+            2048,
+            8192
+          ],
+          "max_num_seqs": 256,
+          "chunked_prefill": [
+            "on"
+          ],
+          "num_prompts": 1024
+        }
+      ]
+    }
+  }
+}

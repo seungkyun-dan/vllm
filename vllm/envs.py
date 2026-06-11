@@ -47,6 +47,10 @@ if TYPE_CHECKING:
     NO_COLOR: bool = False
     VLLM_LOG_STATS_INTERVAL: float = 10.0
     VLLM_TRACE_FUNCTION: int = 0
+    VLLM_SPEC_TRACE: bool = False
+    VLLM_SPEC_TRACE_FILE: str | None = None
+    VLLM_SPEC_TTFT_TRACE: bool = False
+    VLLM_SPEC_TTFT_TRACE_FILE: str | None = None
     VLLM_USE_FLASHINFER_SAMPLER: bool = True
     VLLM_PP_LAYER_PARTITION: str | None = None
     VLLM_CPU_KVCACHE_SPACE: int | None = 0
@@ -818,6 +822,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # If set to 1, vllm will trace function calls
     # Useful for debugging
     "VLLM_TRACE_FUNCTION": lambda: int(os.getenv("VLLM_TRACE_FUNCTION", "0")),
+    # Env-gated serving phase trace used by profiling tools.
+    "VLLM_SPEC_TRACE": lambda: os.getenv("VLLM_SPEC_TRACE", "").lower()
+    in ("1", "true", "yes", "y", "on"),
+    "VLLM_SPEC_TRACE_FILE": lambda: os.getenv("VLLM_SPEC_TRACE_FILE"),
+    # Legacy TTFT trace variable names kept for compatibility.
+    "VLLM_SPEC_TTFT_TRACE": lambda: os.getenv(
+        "VLLM_SPEC_TTFT_TRACE", ""
+    ).lower()
+    in ("1", "true", "yes", "y", "on"),
+    "VLLM_SPEC_TTFT_TRACE_FILE": lambda: os.getenv("VLLM_SPEC_TTFT_TRACE_FILE"),
     # Whether to use the FlashInfer top-k / top-p sampler on CUDA. Enabled
     # by default when the hardware supports it — set to 0 to opt out
     # explicitly, which forces the PyTorch-native (Triton for bs>=8) path.

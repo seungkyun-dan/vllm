@@ -55,6 +55,7 @@ from vllm.v1.metrics.perf import ModelMetrics, PerfStats
 from vllm.v1.metrics.stats import PrefixCacheStats, SchedulerStats
 from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus, StreamingUpdate
+from vllm.v1.spec_decode import trace as spec_trace
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
@@ -983,6 +984,18 @@ class Scheduler(SchedulerInterface):
             )
             scheduler_output.ec_connector_metadata = ec_meta
 
+        spec_trace.emit_scheduled_batch_summary(
+            iteration_id=self.current_step,
+            scheduler_output=scheduler_output,
+            requests=self.requests,
+            num_waiting_reqs=len(self.waiting) + len(self.skipped_waiting),
+            num_running_reqs=len(self.running),
+            max_num_batched_tokens=self.scheduler_config.max_num_batched_tokens,
+            max_num_scheduled_tokens=self.max_num_scheduled_tokens,
+            token_budget_remaining=token_budget,
+            chunked_prefill_enabled=self.scheduler_config.enable_chunked_prefill,
+        )
+
         with record_function_or_nullcontext("schedule: update_after_schedule"):
             self._update_after_schedule(scheduler_output)
         return scheduler_output
@@ -1475,6 +1488,12 @@ class Scheduler(SchedulerInterface):
                 new_token_ids, stopped = self._update_request_with_output(
                     request, new_token_ids
                 )
+                if num_output_tokens_before == 0 and new_token_ids:
+                    spec_trace.emit_first_output_enqueued(
+                        request,
+                        iteration_id=self.current_step,
+                        num_new_token_ids=len(new_token_ids),
+                    )
             elif request.pooling_params and pooler_output is not None:
                 # Pooling stops as soon as there is output.
                 request.status = RequestStatus.FINISHED_STOPPED
@@ -1838,6 +1857,7 @@ class Scheduler(SchedulerInterface):
                 request.streaming_queue = deque()
             self._enqueue_waiting_request(request)
             self.requests[request.request_id] = request
+            spec_trace.emit_request_arrived(request)
             if self.connector is not None:
                 self.connector.on_new_request(request)
             if self.log_stats:
@@ -1918,6 +1938,7 @@ class Scheduler(SchedulerInterface):
         self.finished_req_ids.add(request_id)
         if self.finished_req_ids_dict is not None:
             self.finished_req_ids_dict[request.client_index].add(request_id)
+        spec_trace.emit_request_finished(request, iteration_id=self.current_step)
 
         delay_free_blocks |= connector_delay_free_blocks
         if not delay_free_blocks:
