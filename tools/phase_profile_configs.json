@@ -272,6 +272,127 @@
           "num_prompts": 1024
         }
       ]
+    },
+    "phase7": {
+      "description": "Speculative decoding fixed-k regime sweep.",
+      "purpose": [
+        "Identify regimes where draft-model speculative decoding improves TPOT/throughput.",
+        "Identify regimes where fixed-k speculation hurts TTFT.",
+        "Compare short relaxed-budget and long tight-budget workloads.",
+        "Profile interactions with prefill pressure, token budget, and output length."
+      ],
+      "regimes": [
+        {
+          "name": "short_easy",
+          "input_len": 128,
+          "output_len": 128,
+          "max_num_batched_tokens": 8192,
+          "max_concurrency": [
+            1,
+            32
+          ],
+          "chunked_prefill": [
+            "on"
+          ],
+          "k": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "num_prompts": 256
+        },
+        {
+          "name": "short_high_concurrency",
+          "input_len": 128,
+          "output_len": 128,
+          "max_num_batched_tokens": 8192,
+          "max_concurrency": [
+            64,
+            128
+          ],
+          "chunked_prefill": [
+            "on"
+          ],
+          "k": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "num_prompts": 512
+        },
+        {
+          "name": "long_tight",
+          "input_len": 1024,
+          "output_len": 256,
+          "max_num_batched_tokens": 2048,
+          "max_concurrency": [
+            32,
+            64
+          ],
+          "chunked_prefill": [
+            "on"
+          ],
+          "k": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "num_prompts": 512
+        },
+        {
+          "name": "long_relaxed",
+          "input_len": 1024,
+          "output_len": 256,
+          "max_num_batched_tokens": 8192,
+          "max_concurrency": [
+            32,
+            64
+          ],
+          "chunked_prefill": [
+            "on"
+          ],
+          "k": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "num_prompts": 512
+        },
+        {
+          "name": "output_length_amortization",
+          "input_len": 1024,
+          "output_len": [
+            16,
+            64,
+            256
+          ],
+          "max_num_batched_tokens": [
+            2048,
+            8192
+          ],
+          "max_concurrency": [
+            32
+          ],
+          "chunked_prefill": [
+            "on"
+          ],
+          "k": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "num_prompts": 256
+        }
+      ]
     }
   }
 }

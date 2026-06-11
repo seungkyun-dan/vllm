@@ -1,4 +1,4 @@
-# Phase 0-6 Serving Profile Experiments
+# Phase 0-7 Serving Profile Experiments
 
 This suite profiles vLLM serving behavior and scheduler phase composition. It is
 not an optimization, does not add a scheduling policy, and should not be used to
@@ -53,6 +53,7 @@ away from the `profile` environment.
 - Phase 4: input length sweep
 - Phase 5: output length and speculative amortization sweep
 - Phase 6: open-loop request-rate sweep
+- Phase 7: fixed-k speculative decoding regime sweep
 
 Phase 1 uses serving-level approximations. The prefill-like mode uses short
 outputs and varied closed-loop concurrency. The decode-like mode uses longer
@@ -71,6 +72,7 @@ PHASE=phase4 bash tools/run_phase_profile.sh
 PHASE=phase5 bash tools/run_phase_profile.sh
 PHASE=phase6 REQUEST_RATES="1 2 4 8 16" bash tools/run_phase_profile.sh
 PHASE=phase6 CAPACITY_C=8 bash tools/run_phase_profile.sh
+PHASE=phase7 bash tools/run_phase_profile.sh
 ```
 
 Recommended first sequence:
@@ -157,6 +159,52 @@ Limitations specific to Phase 6:
 - `vllm bench serve` TPOT/ITL is serving-level observed cadence, not pure decode
   kernel time.
 - Trace-derived causal evidence should be used to support benchmark metrics.
+
+
+## Phase 7
+
+Phase 7 studies when always-on draft-model speculative decoding helps or hurts.
+It compares `k=0` target-only serving against fixed-k draft-model speculative
+decoding across selected scheduler regimes. It is not a new speculative decoding
+algorithm.
+
+Run Phase 7 with the default models:
+
+```bash
+conda activate profile
+PHASE=phase7 bash tools/run_phase_profile.sh
+```
+
+Optional model overrides:
+
+```bash
+PHASE=phase7 TARGET_MODEL=Qwen/Qwen3-8B \
+  DRAFT_MODEL=Qwen/Qwen3-0.6B bash tools/run_phase_profile.sh
+```
+
+Interpret Phase 7 as follows:
+
+- If `k>0` improves TPOT/ITL but hurts TTFT, interpret it as target decode-cycle
+  reduction versus draft proposal overhead.
+- If `k>0` hurts both TTFT and TPOT/ITL, speculation is harmful in that regime.
+- If `long_tight` behaves differently from `long_relaxed`, token budget and
+  prefill pressure are likely interacting with speculation.
+- If short outputs show little or negative benefit, speculative overhead may not
+  be amortized.
+- If k benefits are not monotonic, acceptance decay and verification overhead may
+  dominate at larger k.
+- Do not claim that async or adaptive speculation works; Phase 7 only profiles
+  fixed-k existing speculative decoding.
+
+Limitations specific to Phase 7:
+
+- This is fixed-k always-on speculative decoding only.
+- It does not implement delayed or asynchronous draft.
+- `vllm bench serve` TPOT/ITL is serving-level observed cadence, not pure decode
+  kernel time.
+- Trace timestamps may not precisely measure CUDA kernel duration.
+- Acceptance metrics may be unavailable depending on existing trace
+  instrumentation.
 
 ## Trace Fields
 

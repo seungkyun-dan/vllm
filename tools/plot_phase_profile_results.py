@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Plot Phase 2-6 profiling summaries with matplotlib."""
+"""Plot Phase 2-7 profiling summaries with matplotlib."""
 
 from __future__ import annotations
 
@@ -242,6 +242,76 @@ def plot_phase6(root: Path, plots_dir: Path) -> None:
             )
 
 
+def plot_phase7(root: Path, plots_dir: Path) -> None:
+    rows = _load_csv(root / "phase7_summary.csv")
+    if not rows:
+        return
+    phase_dir = plots_dir / "phase7"
+    by_regime = ("case", "max_concurrency", "max_num_batched_tokens", "output_len")
+    for field, filename, title in [
+        (
+            _metric(rows, "p95_ttft_ms", "mean_ttft_ms", "p95_trace_ttft_ms"),
+            "phase7_ttft_vs_k.png",
+            "Phase 7 TTFT vs k by regime",
+        ),
+        (
+            _metric(rows, "p95_tpot_ms", "p95_itl_ms", "mean_tpot_ms", "mean_itl_ms"),
+            "phase7_tpot_itl_vs_k.png",
+            "Phase 7 TPOT/ITL vs k by regime",
+        ),
+        (
+            "request_throughput",
+            "phase7_throughput_vs_k.png",
+            "Phase 7 throughput vs k by regime",
+        ),
+        (
+            _metric(rows, "p95_e2el_ms", "mean_e2el_ms"),
+            "phase7_latency_vs_k.png",
+            "Phase 7 request latency vs k by regime",
+        ),
+        (
+            "mean_prefill_token_ratio",
+            "phase7_prefill_ratio_vs_k.png",
+            "Phase 7 prefill token ratio vs k by regime",
+        ),
+        (
+            "acceptance_rate",
+            "phase7_acceptance_rate_vs_k.png",
+            "Phase 7 acceptance rate vs k",
+        ),
+        (
+            "mean_draft_propose_time_ms",
+            "phase7_draft_propose_time_vs_k.png",
+            "Phase 7 draft propose time vs k",
+        ),
+    ]:
+        if field and _metric(rows, field):
+            _plot(
+                rows,
+                x_field="k",
+                y_field=field,
+                group_keys=by_regime,
+                title=title,
+                ylabel=field,
+                out_path=phase_dir / filename,
+            )
+
+    amort_rows = [
+        row for row in rows
+        if row.get("case") == "output_length_amortization"
+    ]
+    if _metric(amort_rows, "mean_remaining_lifetime_after_first_output_ms"):
+        _plot(
+            amort_rows,
+            x_field="output_len",
+            y_field="mean_remaining_lifetime_after_first_output_ms",
+            group_keys=("k", "max_num_batched_tokens"),
+            title="Phase 7 remaining lifetime after first output vs output_len",
+            ylabel="mean_remaining_lifetime_after_first_output_ms",
+            out_path=phase_dir / "phase7_remaining_lifetime_vs_output_len.png",
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out_root", type=Path)
@@ -252,6 +322,7 @@ def main() -> None:
     plot_phase4(args.out_root, plots_dir)
     plot_phase5(args.out_root, plots_dir)
     plot_phase6(args.out_root, plots_dir)
+    plot_phase7(args.out_root, plots_dir)
     print(f"plots written under {plots_dir}")
 
 

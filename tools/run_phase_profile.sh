@@ -18,6 +18,9 @@ NUM_PROMPTS_LARGE="${NUM_PROMPTS_LARGE:-512}"
 NUM_PROMPTS_PHASE0="${NUM_PROMPTS_PHASE0:-8}"
 NUM_PROMPTS_PHASE5_SPEC="${NUM_PROMPTS_PHASE5_SPEC:-256}"
 NUM_PROMPTS_PHASE6="${NUM_PROMPTS_PHASE6:-1024}"
+NUM_PROMPTS_PHASE7="${NUM_PROMPTS_PHASE7:-512}"
+NUM_PROMPTS_PHASE7_SHORT_EASY="${NUM_PROMPTS_PHASE7_SHORT_EASY:-256}"
+NUM_PROMPTS_PHASE7_AMORT="${NUM_PROMPTS_PHASE7_AMORT:-256}"
 REQUEST_RATES="${REQUEST_RATES:-}"
 CAPACITY_C="${CAPACITY_C:-}"
 MAX_CONCURRENCY_CAP="${MAX_CONCURRENCY_CAP:-}"
@@ -363,19 +366,49 @@ run_analyzers() {
   local run_dir="$2"
   local trace_path="$3"
   local analyzer_log="${run_dir}/analyzer.log"
+  : >"${analyzer_log}"
   if [[ ! -s "${trace_path}" ]]; then
-    printf 'WARNING: trace file is missing or empty: %s\n' "${trace_path}" >"${analyzer_log}"
+    printf 'WARNING: trace file is missing or empty: %s\n' \
+      "${trace_path}" >>"${analyzer_log}"
     return 0
   fi
 
-  "${PYTHON_BIN}" "${SCRIPT_DIR}/analyze_batch_composition_trace.py" \
-    --trace "${trace_path}" \
-    --out-dir "${run_dir}" >"${analyzer_log}" 2>&1
+  if [[ -f "${SCRIPT_DIR}/analyze_batch_composition_trace.py" ]]; then
+    if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/analyze_batch_composition_trace.py" \
+      --trace "${trace_path}" \
+      --out-dir "${run_dir}" >>"${analyzer_log}" 2>&1; then
+      log "WARNING: batch composition analyzer failed for ${run_dir}; see ${analyzer_log}"
+    fi
+  else
+    printf 'WARNING: missing optional analyzer: analyze_batch_composition_trace.py\n' \
+      >>"${analyzer_log}"
+  fi
 
-  if [[ "${phase}" == "phase5" && -f "${run_dir}/request_lifecycle.csv" ]]; then
-    "${PYTHON_BIN}" "${SCRIPT_DIR}/analyze_remaining_lifetime.py" \
-      --request-csv "${run_dir}/request_lifecycle.csv" \
-      --out-dir "${run_dir}" >>"${analyzer_log}" 2>&1
+  if [[ "${phase}" == "phase7" ]]; then
+    if [[ -f "${SCRIPT_DIR}/analyze_spec_ttft_trace.py" ]]; then
+      if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/analyze_spec_ttft_trace.py" \
+        --trace "${trace_path}" \
+        --out-dir "${run_dir}" >>"${analyzer_log}" 2>&1; then
+        log "WARNING: spec TTFT analyzer failed for ${run_dir}; see ${analyzer_log}"
+      fi
+    else
+      printf 'WARNING: missing optional analyzer: analyze_spec_ttft_trace.py\n' \
+        >>"${analyzer_log}"
+    fi
+  fi
+
+  if [[ ( "${phase}" == "phase5" || "${phase}" == "phase7" ) \
+      && -f "${run_dir}/request_lifecycle.csv" ]]; then
+    if [[ -f "${SCRIPT_DIR}/analyze_remaining_lifetime.py" ]]; then
+      if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/analyze_remaining_lifetime.py" \
+        --request-csv "${run_dir}/request_lifecycle.csv" \
+        --out-dir "${run_dir}" >>"${analyzer_log}" 2>&1; then
+        log "WARNING: remaining lifetime analyzer failed for ${run_dir}; see ${analyzer_log}"
+      fi
+    else
+      printf 'WARNING: missing optional analyzer: analyze_remaining_lifetime.py\n' \
+        >>"${analyzer_log}"
+    fi
   fi
 }
 
@@ -598,6 +631,14 @@ run_one_request_rate() {
 
 aggregate_outputs() {
   "${PYTHON_BIN}" "${SCRIPT_DIR}/aggregate_phase_profile_results.py" "${OUT_ROOT}"
+  if [[ -f "${OUT_ROOT}/phase7_summary.csv" \
+      && -f "${SCRIPT_DIR}/compare_phase7_spec_results.py" ]]; then
+    if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/compare_phase7_spec_results.py" \
+      "${OUT_ROOT}/phase7_summary.csv" --out-dir "${OUT_ROOT}/phase7" \
+      >"${OUT_ROOT}/phase7_compare.log" 2>&1; then
+      log "WARNING: Phase 7 comparison failed; see ${OUT_ROOT}/phase7_compare.log"
+    fi
+  fi
   if [[ "${RUN_PLOTS}" == "1" ]]; then
     if ! "${PYTHON_BIN}" "${SCRIPT_DIR}/plot_phase_profile_results.py" \
       "${OUT_ROOT}" >"${OUT_ROOT}/plot.log" 2>&1; then
@@ -695,6 +736,35 @@ run_phase6() {
   done
 }
 
+run_phase7() {
+  for k in 0 1 2 3 4; do
+    for concurrency in 1 32; do
+      run_one phase7 short_easy "${k}" 128 128 "${concurrency}" \
+        8192 on "${NUM_PROMPTS_PHASE7_SHORT_EASY}" 256
+    done
+    for concurrency in 64 128; do
+      run_one phase7 short_high_concurrency "${k}" 128 128 \
+        "${concurrency}" 8192 on "${NUM_PROMPTS_PHASE7}" 256
+    done
+    for concurrency in 32 64; do
+      run_one phase7 long_tight "${k}" 1024 256 "${concurrency}" \
+        2048 on "${NUM_PROMPTS_PHASE7}" 256
+      run_one phase7 long_relaxed "${k}" 1024 256 "${concurrency}" \
+        8192 on "${NUM_PROMPTS_PHASE7}" 256
+    done
+  done
+
+  for k in 0 1 2 3; do
+    for output_len in 16 64 256; do
+      for token_budget in 2048 8192; do
+        run_one phase7 output_length_amortization "${k}" 1024 \
+          "${output_len}" 32 "${token_budget}" on \
+          "${NUM_PROMPTS_PHASE7_AMORT}" 256
+      done
+    done
+  done
+}
+
 run_selected_phase() {
   local phase="$1"
   case "${phase}" in
@@ -705,6 +775,7 @@ run_selected_phase() {
     phase4) run_phase4 ;;
     phase5) run_phase5 ;;
     phase6) run_phase6 ;;
+    phase7) run_phase7 ;;
     all)
       run_phase0
       run_phase1
@@ -713,8 +784,9 @@ run_selected_phase() {
       run_phase4
       run_phase5
       run_phase6
+      run_phase7
       ;;
-    *) die "PHASE must be one of phase0, phase1, phase2, phase3, phase4, phase5, phase6, all" ;;
+    *) die "PHASE must be one of phase0, phase1, phase2, phase3, phase4, phase5, phase6, phase7, all" ;;
   esac
 }
 

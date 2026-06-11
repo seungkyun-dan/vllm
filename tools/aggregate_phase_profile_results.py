@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Aggregate Phase 0-6 profiling run outputs into summary CSVs."""
+"""Aggregate Phase 0-7 profiling run outputs into summary CSVs."""
 
 from __future__ import annotations
 
@@ -115,6 +115,26 @@ OPEN_LOOP_FIELDS = [
     "cadence_collapse_indicator",
 ]
 
+SPEC_FIELDS = [
+    "draft_propose_before_first_output_fraction",
+    "first_output_after_draft_propose_end_fraction",
+    "target_verify_before_first_output_fraction",
+    "target_verify_next_iteration_fraction",
+    "mean_draft_prefill_time_ms",
+    "mean_draft_decode_time_ms",
+    "mean_draft_propose_time_ms",
+    "mean_target_verify_time_ms",
+    "accepted_tokens_per_request",
+    "accepted_tokens_per_step",
+    "acceptance_rate",
+    "acceptance_length",
+    "num_drafts",
+    "verified_tokens",
+    "draft_tokens",
+    "accepted_tokens",
+    "verifier_waste_ratio",
+]
+
 PHASE_READMES = {
     "phase2": [
         "Whether short prompt + large token budget quickly becomes decode-heavy.",
@@ -153,6 +173,12 @@ PHASE_READMES = {
             "prompt + large token budget?"
         ),
     ],
+    "phase7": [
+        "Which fixed k values improve TPOT/ITL or throughput over k=0?",
+        "Which fixed k values hurt TTFT or request latency?",
+        "Does long_tight differ from long_relaxed under the same k?",
+        "Are short outputs too short to amortize speculative overhead?",
+    ],
 }
 
 
@@ -180,6 +206,15 @@ def load_json(path: Path) -> dict[str, Any]:
         return data[0]
     if isinstance(data, dict):
         return data
+    return {}
+
+
+def load_first_csv_row(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8", newline="") as csv_file:
+        for row in csv.DictReader(csv_file):
+            return dict(row)
     return {}
 
 
@@ -237,9 +272,7 @@ def _count_timeouts(result_json: dict[str, Any]) -> int | None:
     if not isinstance(errors, list):
         return None
     return sum(
-        1
-        for error in errors
-        if error and "timeout" in str(error).lower()
+        1 for error in errors if error and "timeout" in str(error).lower()
     )
 
 
@@ -255,6 +288,47 @@ def _parse_run_name(run_name: str) -> dict[str, Any]:
         if match:
             return match.groupdict()
     return {}
+
+
+def _apply_spec_metrics(
+    row: dict[str, Any], bench: dict[str, Any], run_dir: Path
+) -> None:
+    mapping = {
+        "spec_decode_acceptance_rate": "acceptance_rate",
+        "spec_decode_acceptance_length": "acceptance_length",
+        "spec_decode_num_drafts": "num_drafts",
+        "spec_decode_draft_tokens": "draft_tokens",
+        "spec_decode_accepted_tokens": "accepted_tokens",
+    }
+    for src, dest in mapping.items():
+        if src in bench and row.get(dest) in (None, ""):
+            row[dest] = bench[src]
+
+    spec_summary = load_first_csv_row(run_dir / "spec_summary.csv")
+    spec_summary.update(load_json(run_dir / "spec_summary.json"))
+    for field in SPEC_FIELDS:
+        if field in spec_summary:
+            row[field] = spec_summary[field]
+
+    draft_tokens = _num(row.get("draft_tokens"))
+    accepted_tokens = _num(row.get("accepted_tokens"))
+    completed = _num(row.get("completed"))
+    num_drafts = _num(row.get("num_drafts"))
+    if draft_tokens and accepted_tokens is not None:
+        if row.get("acceptance_rate") in (None, ""):
+            row["acceptance_rate"] = (accepted_tokens / draft_tokens) * 100.0
+        if row.get("verifier_waste_ratio") in (None, ""):
+            row["verifier_waste_ratio"] = (
+                max(0.0, draft_tokens - accepted_tokens) / draft_tokens
+            )
+    if num_drafts and accepted_tokens is not None:
+        if row.get("accepted_tokens_per_step") in (None, ""):
+            row["accepted_tokens_per_step"] = accepted_tokens / num_drafts
+        if row.get("acceptance_length") in (None, ""):
+            row["acceptance_length"] = 1.0 + accepted_tokens / num_drafts
+    if accepted_tokens is not None and completed:
+        if row.get("accepted_tokens_per_request") in (None, ""):
+            row["accepted_tokens_per_request"] = accepted_tokens / completed
 
 
 def parse_run_dir(run_dir: Path) -> dict[str, Any]:
@@ -282,6 +356,7 @@ def parse_run_dir(run_dir: Path) -> dict[str, Any]:
         for key in source:
             if key in data:
                 row[key] = data[key]
+    _apply_spec_metrics(row, bench, run_dir)
     return row
 
 
@@ -376,6 +451,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         + TRACE_FIELDS
         + REMAINING_FIELDS
         + OPEN_LOOP_FIELDS
+        + SPEC_FIELDS
     )
     extra = sorted({key for row in rows for key in row} - set(fields))
     fieldnames = fields + extra
