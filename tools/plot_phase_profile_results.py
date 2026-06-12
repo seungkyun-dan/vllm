@@ -35,9 +35,26 @@ def _metric(rows: list[dict[str, str]], *candidates: str) -> str | None:
     return None
 
 
+_KEY_ABBREV = {
+    "case": "",
+    "max_concurrency": "c",
+    "max_num_batched_tokens": "tb",
+    "output_len": "o",
+    "input_len": "i",
+    "chunked_prefill": "ch",
+    "k": "k",
+}
+
+
 def _group_key(row: dict[str, str], keys: tuple[str, ...]) -> str:
-    parts = [f"{key}={row.get(key, '')}" for key in keys if row.get(key, "") != ""]
-    return ", ".join(parts) or "all"
+    parts: list[str] = []
+    for key in keys:
+        value = row.get(key, "")
+        if value == "":
+            continue
+        abbrev = _KEY_ABBREV.get(key, key)
+        parts.append(f"{abbrev}{value}" if abbrev else str(value))
+    return "|".join(parts) or "all"
 
 
 def _plot(
@@ -62,7 +79,13 @@ def _plot(
 
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(7, 4.2))
+    n_series = len(series)
+    # Widen the figure and push the legend outside the axes when there are
+    # many series, so the plot area stays readable.
+    if n_series > 6:
+        fig, ax = plt.subplots(figsize=(11, 4.6))
+    else:
+        fig, ax = plt.subplots(figsize=(7, 4.2))
     for label, points in sorted(series.items()):
         points = sorted(points)
         xs = [point[0] for point in points]
@@ -72,11 +95,21 @@ def _plot(
     ax.set_xlabel(x_field)
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
-    if len(series) > 1:
-        ax.legend(fontsize="small")
+    if n_series > 1:
+        if n_series > 6:
+            ncol = 1 if n_series <= 14 else 2
+            ax.legend(
+                fontsize="x-small",
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                ncol=ncol,
+                frameon=False,
+            )
+        else:
+            ax.legend(fontsize="small")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path)
+    fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
     return True
 
