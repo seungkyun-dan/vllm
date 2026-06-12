@@ -25,11 +25,16 @@ if TYPE_CHECKING:
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 
 _ENABLED = (
-    os.getenv("VLLM_SPEC_TRACE", "").lower() in _TRUE_VALUES
+    os.getenv("SPEC_TRACE", "").lower() in _TRUE_VALUES
+    or os.getenv("SPEC_TTFT_TRACE", "").lower() in _TRUE_VALUES
+    or os.getenv("VLLM_SPEC_TRACE", "").lower() in _TRUE_VALUES
     or os.getenv("VLLM_SPEC_TTFT_TRACE", "").lower() in _TRUE_VALUES
 )
+
 _TRACE_PATH = (
-    os.getenv("VLLM_SPEC_TRACE_FILE")
+    os.getenv("SPEC_TRACE_FILE")
+    or os.getenv("SPEC_TTFT_TRACE_FILE")
+    or os.getenv("VLLM_SPEC_TRACE_FILE")
     or os.getenv("VLLM_SPEC_TTFT_TRACE_FILE")
     or f"/tmp/vllm_spec_trace_{os.getpid()}.jsonl"
 )
@@ -73,29 +78,36 @@ def emit(event: str, **payload: Any) -> None:
     if not _ENABLED:
         return
 
-    record = {
-        "schema_version": 1,
-        "event": event,
-        "ts_ns": time.time_ns(),
-        **payload,
-    }
-    line = json.dumps(record, default=str, separators=(",", ":"), sort_keys=True)
+    try:
+        record = {
+            "schema_version": 1,
+            "event": event,
+            "ts_ns": time.time_ns(),
+            **payload,
+        }
+        line = json.dumps(record, default=str, separators=(",", ":"), sort_keys=True)
 
-    with _lock:
-        trace_file = _get_trace_file()
-        if trace_file is not None:
-            trace_file.write(line + "\n")
+        with _lock:
+            trace_file = _get_trace_file()
+            if trace_file is not None:
+                trace_file.write(line + "\n")
+    except Exception:
+        # Tracing is best-effort and must never affect serving.
+        return
 
 
 def emit_request_arrived(request: "Request") -> None:
     if not _ENABLED:
         return
-    emit(
-        "request_arrived",
-        request_id=request.request_id,
-        num_prompt_tokens=request.num_prompt_tokens,
-        num_output_tokens=request.num_output_tokens,
-    )
+    try:
+        emit(
+            "request_arrived",
+            request_id=request.request_id,
+            num_prompt_tokens=request.num_prompt_tokens,
+            num_output_tokens=request.num_output_tokens,
+        )
+    except Exception:
+        return
 
 
 def emit_scheduled_batch_summary(
@@ -113,6 +125,34 @@ def emit_scheduled_batch_summary(
     if not _ENABLED:
         return
 
+    try:
+        _emit_scheduled_batch_summary_impl(
+            iteration_id=iteration_id,
+            scheduler_output=scheduler_output,
+            requests=requests,
+            num_waiting_reqs=num_waiting_reqs,
+            num_running_reqs=num_running_reqs,
+            max_num_batched_tokens=max_num_batched_tokens,
+            max_num_scheduled_tokens=max_num_scheduled_tokens,
+            token_budget_remaining=token_budget_remaining,
+            chunked_prefill_enabled=chunked_prefill_enabled,
+        )
+    except Exception:
+        return
+
+
+def _emit_scheduled_batch_summary_impl(
+    *,
+    iteration_id: int,
+    scheduler_output: "SchedulerOutput",
+    requests: dict[str, "Request"],
+    num_waiting_reqs: int,
+    num_running_reqs: int,
+    max_num_batched_tokens: int,
+    max_num_scheduled_tokens: int,
+    token_budget_remaining: int,
+    chunked_prefill_enabled: bool,
+) -> None:
     num_prefill_reqs = 0
     num_decode_reqs = 0
     num_prefill_tokens = 0
@@ -201,34 +241,38 @@ def emit_first_output_enqueued(
 ) -> None:
     if not _ENABLED:
         return
-
-    req_id = request.request_id
-    if req_id in _first_output_seen:
+    try:
+        req_id = request.request_id
+        if req_id in _first_output_seen:
+            return
+        _first_output_seen.add(req_id)
+        emit(
+            "first_output_enqueued",
+            request_id=req_id,
+            iteration_id=iteration_id,
+            num_prompt_tokens=request.num_prompt_tokens,
+            num_new_token_ids=num_new_token_ids,
+            num_output_tokens=request.num_output_tokens,
+        )
+    except Exception:
         return
-    _first_output_seen.add(req_id)
-    emit(
-        "first_output_enqueued",
-        request_id=req_id,
-        iteration_id=iteration_id,
-        num_prompt_tokens=request.num_prompt_tokens,
-        num_new_token_ids=num_new_token_ids,
-        num_output_tokens=request.num_output_tokens,
-    )
 
 
 def emit_request_finished(request: "Request", *, iteration_id: int) -> None:
     if not _ENABLED:
         return
-
-    req_id = request.request_id
-    if req_id in _finished_seen:
+    try:
+        req_id = request.request_id
+        if req_id in _finished_seen:
+            return
+        _finished_seen.add(req_id)
+        emit(
+            "request_finished",
+            request_id=req_id,
+            iteration_id=iteration_id,
+            num_prompt_tokens=request.num_prompt_tokens,
+            num_output_tokens=request.num_output_tokens,
+            finish_reason=request.get_finished_reason(),
+        )
+    except Exception:
         return
-    _finished_seen.add(req_id)
-    emit(
-        "request_finished",
-        request_id=req_id,
-        iteration_id=iteration_id,
-        num_prompt_tokens=request.num_prompt_tokens,
-        num_output_tokens=request.num_output_tokens,
-        finish_reason=request.get_finished_reason(),
-    )

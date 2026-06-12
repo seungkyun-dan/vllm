@@ -77,23 +77,23 @@ activate_env() {
   if command -v conda >/dev/null 2>&1; then
     local conda_base
     conda_base="$(conda info --base 2>/dev/null || true)"
-    if [[ -n "${conda_base}" && -f "${conda_base}/etc/profile.d/conda.sh" ]]; then
+    if [[ -n "${conda_base}" && -f "${conda_base}/etc/vllm.d/conda.sh" ]]; then
       # shellcheck disable=SC1090
-      source "${conda_base}/etc/profile.d/conda.sh"
-      if conda env list | awk '{print $1}' | grep -qx profile; then
-        conda activate profile
-        log "activated conda environment: profile"
+      source "${conda_base}/etc/vllm.d/conda.sh"
+      if conda env list | awk '{print $1}' | grep -qx vllm; then
+        conda activate vllm
+        log "activated conda environment: vllm"
       fi
     fi
   fi
 
-  if [[ "${CONDA_DEFAULT_ENV:-}" != "profile" ]]; then
+  if [[ "${CONDA_DEFAULT_ENV:-}" != "vllm" ]]; then
     if [[ "${USE_VENV}" == "1" && -f "${REPO_ROOT}/.venv/bin/activate" ]]; then
       # shellcheck disable=SC1091
       source "${REPO_ROOT}/.venv/bin/activate"
-      log "activated .venv because USE_VENV=1 and conda profile was unavailable"
+      log "activated .venv because USE_VENV=1 and conda vllm was unavailable"
     else
-      die "conda environment 'profile' is not active/available. Run: conda activate profile"
+      die "conda environment 'vllm' is not active/available. Run: conda activate vllm"
     fi
   fi
 
@@ -190,7 +190,9 @@ capture_help() {
   if ! "${VLLM_CMD[@]}" serve --help=all >"${SERVE_HELP_FILE}" 2>&1; then
     "${VLLM_CMD[@]}" serve --help >"${SERVE_HELP_FILE}" 2>&1 || true
   fi
-  "${VLLM_CMD[@]}" bench serve --help >"${BENCH_HELP_FILE}" 2>&1 || true
+  if ! "${VLLM_CMD[@]}" bench serve --help=all >"${BENCH_HELP_FILE}" 2>&1; then
+    "${VLLM_CMD[@]}" bench serve --help >"${BENCH_HELP_FILE}" 2>&1 || true
+  fi
 }
 
 help_has() {
@@ -487,7 +489,7 @@ run_one() {
 
   {
     printf 'server:\n'
-    printf 'VLLM_USE_V1=1 VLLM_SPEC_TRACE=1 VLLM_SPEC_TRACE_FILE=%q VLLM_SPEC_TTFT_TRACE=1 VLLM_SPEC_TTFT_TRACE_FILE=%q ' "${trace_path}" "${trace_path}"
+    printf 'VLLM_USE_V1=1 SPEC_TRACE=1 SPEC_TRACE_FILE=%q SPEC_TTFT_TRACE=1 SPEC_TTFT_TRACE_FILE=%q ' "${trace_path}" "${trace_path}"
     quote_cmd "${server_cmd[@]}"
     printf '\nbenchmark:\n'
     quote_cmd "${bench_cmd[@]}"
@@ -500,10 +502,10 @@ run_one() {
   log "starting ${run_name}"
   env \
     VLLM_USE_V1=1 \
-    VLLM_SPEC_TRACE=1 \
-    VLLM_SPEC_TRACE_FILE="${trace_path}" \
-    VLLM_SPEC_TTFT_TRACE=1 \
-    VLLM_SPEC_TTFT_TRACE_FILE="${trace_path}" \
+    SPEC_TRACE=1 \
+    SPEC_TRACE_FILE="${trace_path}" \
+    SPEC_TTFT_TRACE=1 \
+    SPEC_TTFT_TRACE_FILE="${trace_path}" \
     "${server_cmd[@]}" >"${server_log}" 2>&1 &
   SERVER_PID=$!
   wait_for_server "${server_log}"
@@ -602,7 +604,7 @@ run_one_request_rate() {
 
   {
     printf 'server:\n'
-    printf 'VLLM_USE_V1=1 VLLM_SPEC_TRACE=1 VLLM_SPEC_TRACE_FILE=%q VLLM_SPEC_TTFT_TRACE=1 VLLM_SPEC_TTFT_TRACE_FILE=%q ' "${trace_path}" "${trace_path}"
+    printf 'VLLM_USE_V1=1 SPEC_TRACE=1 SPEC_TRACE_FILE=%q SPEC_TTFT_TRACE=1 SPEC_TTFT_TRACE_FILE=%q ' "${trace_path}" "${trace_path}"
     quote_cmd "${server_cmd[@]}"
     printf '\nbenchmark:\n'
     quote_cmd "${bench_cmd[@]}"
@@ -615,10 +617,10 @@ run_one_request_rate() {
   log "starting ${run_name}"
   env \
     VLLM_USE_V1=1 \
-    VLLM_SPEC_TRACE=1 \
-    VLLM_SPEC_TRACE_FILE="${trace_path}" \
-    VLLM_SPEC_TTFT_TRACE=1 \
-    VLLM_SPEC_TTFT_TRACE_FILE="${trace_path}" \
+    SPEC_TRACE=1 \
+    SPEC_TRACE_FILE="${trace_path}" \
+    SPEC_TTFT_TRACE=1 \
+    SPEC_TTFT_TRACE_FILE="${trace_path}" \
     "${server_cmd[@]}" >"${server_log}" 2>&1 &
   SERVER_PID=$!
   wait_for_server "${server_log}"
@@ -793,6 +795,10 @@ run_selected_phase() {
 main() {
   cd "${REPO_ROOT}"
   mkdir -p "${OUT_ROOT}"
+  # Ensure the local repo wins over any editable install pointing elsewhere,
+  # so trace.py / scheduler.py edits in this checkout are visible to both the
+  # API server console script and the spawn-launched EngineCore subprocess.
+  export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
   activate_env
   write_env_report
   validate_cuda_ready
