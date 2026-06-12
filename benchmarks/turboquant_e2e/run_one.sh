@@ -145,7 +145,13 @@ is_nonnegative_int "${PORT}" || die "--port must be a nonnegative integer."
 : "${WARMUP_PROMPTS:=}"
 : "${IGNORE_EOS:=1}"
 
-PYTHON_BIN=${PYTHON_BIN:-"${REPO_ROOT}/.venv/bin/python"}
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+  else
+    PYTHON_BIN=$(command -v python || true)
+  fi
+fi
 
 RAW_DIR="${RESULTS_DIR}/raw"
 LOG_DIR="${RESULTS_DIR}/logs"
@@ -344,13 +350,15 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
 fi
 
-[[ -x "${PYTHON_BIN}" ]] || die \
-  "Python executable not found at '${PYTHON_BIN}'. Create .venv with uv or set PYTHON_BIN."
+[[ -n "${PYTHON_BIN}" && -x "${PYTHON_BIN}" ]] || die \
+  "Python executable not found at '${PYTHON_BIN:-<unset>}'. Activate a Python env (conda/uv) or set PYTHON_BIN."
 command -v curl >/dev/null 2>&1 || die "curl is required to poll /v1/models."
 
-if ! BENCH_HELP=$("${VLLM_BIN}" bench serve --help 2>&1); then
-  printf '%s\n' "${BENCH_HELP}" > "${HELP_LOG}"
-  die "Failed to run '${VLLM_BIN} bench serve --help'. See ${HELP_LOG}."
+if ! BENCH_HELP=$("${VLLM_BIN}" bench serve --help=all 2>&1); then
+  if ! BENCH_HELP=$("${VLLM_BIN}" bench serve --help 2>&1); then
+    printf '%s\n' "${BENCH_HELP}" > "${HELP_LOG}"
+    die "Failed to run '${VLLM_BIN} bench serve --help'. See ${HELP_LOG}."
+  fi
 fi
 printf '%s\n' "${BENCH_HELP}" > "${HELP_LOG}"
 

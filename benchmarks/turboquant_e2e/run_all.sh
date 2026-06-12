@@ -35,7 +35,13 @@ is_nonnegative_int() {
 : "${DRY_RUN:=0}"
 : "${VLLM_BIN:=vllm}"
 
-PYTHON_BIN=${PYTHON_BIN:-"${REPO_ROOT}/.venv/bin/python"}
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
+    PYTHON_BIN="${REPO_ROOT}/.venv/bin/python"
+  else
+    PYTHON_BIN=$(command -v python || true)
+  fi
+fi
 
 [[ -n "${VANILLA_MODEL:-}" ]] || die "VANILLA_MODEL must be set."
 [[ -n "${TURBOQUANT_MODEL:-}" ]] || die "TURBOQUANT_MODEL must be set."
@@ -65,8 +71,8 @@ fi
 mkdir -p "${RESULTS_DIR}"
 
 if [[ "${DRY_RUN}" != "1" ]]; then
-  [[ -x "${PYTHON_BIN}" ]] || die \
-    "Python executable not found at '${PYTHON_BIN}'. Create .venv with uv or set PYTHON_BIN."
+  [[ -n "${PYTHON_BIN}" && -x "${PYTHON_BIN}" ]] || die \
+    "Python executable not found at '${PYTHON_BIN:-<unset>}'. Activate a Python env (conda/uv) or set PYTHON_BIN."
 fi
 
 CONFIG_FILE="${RESULTS_DIR}/run_config.env"
