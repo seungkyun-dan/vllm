@@ -34,6 +34,8 @@ is_nonnegative_int() {
 : "${BASE_PORT:=8000}"
 : "${DRY_RUN:=0}"
 : "${VLLM_BIN:=vllm}"
+: "${SKIP_VANILLA:=0}"
+: "${SKIP_TURBOQUANT:=0}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -x "${REPO_ROOT}/.venv/bin/python" ]]; then
@@ -43,8 +45,8 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
   fi
 fi
 
-[[ -n "${VANILLA_MODEL:-}" ]] || die "VANILLA_MODEL must be set."
-[[ -n "${TURBOQUANT_MODEL:-}" ]] || die "TURBOQUANT_MODEL must be set."
+[[ "${SKIP_VANILLA}" == "1" || -n "${VANILLA_MODEL:-}" ]] || die "VANILLA_MODEL must be set (or set SKIP_VANILLA=1)."
+[[ "${SKIP_TURBOQUANT}" == "1" || -n "${TURBOQUANT_MODEL:-}" ]] || die "TURBOQUANT_MODEL must be set (or set SKIP_TURBOQUANT=1)."
 
 VANILLA_ENGINE_ARGS=${VANILLA_ENGINE_ARGS:-}
 TURBOQUANT_ENGINE_ARGS=${TURBOQUANT_ENGINE_ARGS:-}
@@ -101,7 +103,12 @@ failures=0
 condition_index=0
 RUN_ONE="${SCRIPT_DIR}/run_one.sh"
 
-for variant in vanilla turboquant; do
+VARIANTS_TO_RUN=()
+[[ "${SKIP_VANILLA}" != "1" ]] && VARIANTS_TO_RUN+=("vanilla")
+[[ "${SKIP_TURBOQUANT}" != "1" ]] && VARIANTS_TO_RUN+=("turboquant")
+[[ ${#VARIANTS_TO_RUN[@]} -gt 0 ]] || die "Both SKIP_VANILLA and SKIP_TURBOQUANT are set; nothing to run."
+
+for variant in "${VARIANTS_TO_RUN[@]}"; do
   if [[ "${variant}" == "vanilla" ]]; then
     model="${VANILLA_MODEL}"
     engine_args="${VANILLA_ENGINE_ARGS}"
