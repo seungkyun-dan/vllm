@@ -25,6 +25,13 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 : "${SERVER_READY_TIMEOUT:=900}"
 : "${VLLM_BIN:=vllm}"
 
+# If caller sets SKIP_VANILLA=1, reuse the most recent existing vanilla dir
+# per workload from OUT_ROOT instead of running vanilla. Saved here because
+# we unset/re-set SKIP_VANILLA internally during the run.
+REUSE_VANILLA=0
+[[ "${SKIP_VANILLA:-0}" == "1" ]] && REUSE_VANILLA=1
+unset SKIP_VANILLA
+
 # Auto-pick python from active conda env (or PATH).
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
@@ -117,22 +124,35 @@ run_workload() {
   export VANILLA_MODEL="${MODEL}" TURBOQUANT_MODEL="${MODEL}"
   export INPUT_LEN="${input}" OUTPUT_LEN="${output}"
   export CONCURRENCY_VALUES="${concs}" NUM_PROMPTS="${nprompts}" REPEAT="${repeat}"
-  export VANILLA_ENGINE_ARGS="--dtype float16 --max-model-len ${max_model_len}"
+  # Force FLASH_ATTN backend: TurboQuant assumes FA2 layout and crashes with
+  # vLLM's auto-selected FLASHINFER backend on Hopper/Blackwell (B200/H100).
+  # Apply to vanilla too so the comparison stays apples-to-apples.
+  local COMMON_ARGS="--dtype float16 --max-model-len ${max_model_len} --attention-backend FLASH_ATTN"
+  export VANILLA_ENGINE_ARGS="${COMMON_ARGS}"
 
-  # 1) vanilla
+  # 1) vanilla — either run fresh, or reuse the latest existing vanilla dir
   local TS VAN_DIR
-  TS=$(date -u '+%Y%m%dT%H%M%SZ')
-  VAN_DIR="${OUT_ROOT}/${TS}_${name}_vanilla"
-  export RESULTS_DIR="${VAN_DIR}"
-  export TURBOQUANT_ENGINE_ARGS="--dtype float16 --max-model-len ${max_model_len} --kv-cache-dtype turboquant_k8v4"
-  unset SKIP_VANILLA
-  export SKIP_TURBOQUANT=1
-  if [[ "${DRY_RUN}" == "1" ]]; then
-    echo "[dry-run] vanilla -> ${VAN_DIR}"
+  if [[ "${REUSE_VANILLA}" == "1" ]]; then
+    VAN_DIR=$(ls -dt "${OUT_ROOT}"/*_"${name}"_vanilla 2>/dev/null | head -n1 || true)
+    if [[ -z "${VAN_DIR}" || ! -d "${VAN_DIR}" ]]; then
+      echo "WARN: SKIP_VANILLA=1 but no existing '*_${name}_vanilla' dir under ${OUT_ROOT}; skipping workload."
+      return 0
+    fi
+    echo "Reusing vanilla: ${VAN_DIR}"
   else
-    bash "${SCRIPT_DIR}/run_all.sh" || echo "WARN: vanilla had failures for ${name}"
+    TS=$(date -u '+%Y%m%dT%H%M%SZ')
+    VAN_DIR="${OUT_ROOT}/${TS}_${name}_vanilla"
+    export RESULTS_DIR="${VAN_DIR}"
+    export TURBOQUANT_ENGINE_ARGS="${COMMON_ARGS} --kv-cache-dtype turboquant_k8v4"
+    unset SKIP_VANILLA
+    export SKIP_TURBOQUANT=1
+    if [[ "${DRY_RUN}" == "1" ]]; then
+      echo "[dry-run] vanilla -> ${VAN_DIR}"
+    else
+      bash "${SCRIPT_DIR}/run_all.sh" || echo "WARN: vanilla had failures for ${name}"
+    fi
+    unset SKIP_TURBOQUANT
   fi
-  unset SKIP_TURBOQUANT
   printf "%-15s | %-22s | %s\n" "${name}" "vanilla" "${VAN_DIR}" >> "${INDEX_FILE}"
 
   # 2) variants (reuse vanilla)
@@ -148,7 +168,7 @@ run_workload() {
       \cp -f "${VAN_DIR}"/logs/vanilla_*              "${DIR}/logs/" 2>/dev/null || true
     fi
     export RESULTS_DIR="${DIR}"
-    export TURBOQUANT_ENGINE_ARGS="--dtype float16 --max-model-len ${max_model_len} --kv-cache-dtype ${VAR}"
+    export TURBOQUANT_ENGINE_ARGS="${COMMON_ARGS} --kv-cache-dtype ${VAR}"
     if [[ "${DRY_RUN}" == "1" ]]; then
       echo "[dry-run] ${VAR} -> ${DIR}"
     else
