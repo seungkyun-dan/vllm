@@ -253,4 +253,4 @@ csrc/cpu/cpu_attn_dispatch_generated.h
 
 # Ignore generated profile files
 profile/*
-benchmarks/turboquant_e2e/*
+benchmarks/turboquant_e2e/results/*
