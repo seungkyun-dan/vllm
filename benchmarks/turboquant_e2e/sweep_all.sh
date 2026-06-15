@@ -131,14 +131,15 @@ run_workload() {
   export VANILLA_ENGINE_ARGS="${COMMON_ARGS}"
 
   # 1) vanilla — either run fresh, or reuse the latest existing vanilla dir
-  local TS VAN_DIR
+  local TS VAN_DIR=""
   if [[ "${REUSE_VANILLA}" == "1" ]]; then
     VAN_DIR=$(ls -dt "${OUT_ROOT}"/*_"${name}"_vanilla 2>/dev/null | head -n1 || true)
     if [[ -z "${VAN_DIR}" || ! -d "${VAN_DIR}" ]]; then
-      echo "WARN: SKIP_VANILLA=1 but no existing '*_${name}_vanilla' dir under ${OUT_ROOT}; skipping workload."
-      return 0
+      echo "WARN: SKIP_VANILLA=1 but no existing '*_${name}_vanilla' dir; running variants without a vanilla baseline."
+      VAN_DIR=""
+    else
+      echo "Reusing vanilla: ${VAN_DIR}"
     fi
-    echo "Reusing vanilla: ${VAN_DIR}"
   else
     TS=$(date -u '+%Y%m%dT%H%M%SZ')
     VAN_DIR="${OUT_ROOT}/${TS}_${name}_vanilla"
@@ -153,7 +154,9 @@ run_workload() {
     fi
     unset SKIP_TURBOQUANT
   fi
-  printf "%-15s | %-22s | %s\n" "${name}" "vanilla" "${VAN_DIR}" >> "${INDEX_FILE}"
+  if [[ -n "${VAN_DIR}" ]]; then
+    printf "%-15s | %-22s | %s\n" "${name}" "vanilla" "${VAN_DIR}" >> "${INDEX_FILE}"
+  fi
 
   # 2) variants (reuse vanilla)
   local variant_args=()
@@ -163,9 +166,11 @@ run_workload() {
     local DIR="${OUT_ROOT}/${TS}_${name}_${VAR}"
     if [[ "${DRY_RUN}" != "1" ]]; then
       mkdir -p "${DIR}/raw" "${DIR}/logs"
-      \cp -f "${VAN_DIR}"/raw/vanilla_*.json          "${DIR}/raw/" 2>/dev/null || true
-      \cp -f "${VAN_DIR}"/raw/vanilla_*.metadata.json "${DIR}/raw/" 2>/dev/null || true
-      \cp -f "${VAN_DIR}"/logs/vanilla_*              "${DIR}/logs/" 2>/dev/null || true
+      if [[ -n "${VAN_DIR}" ]]; then
+        \cp -f "${VAN_DIR}"/raw/vanilla_*.json          "${DIR}/raw/" 2>/dev/null || true
+        \cp -f "${VAN_DIR}"/raw/vanilla_*.metadata.json "${DIR}/raw/" 2>/dev/null || true
+        \cp -f "${VAN_DIR}"/logs/vanilla_*              "${DIR}/logs/" 2>/dev/null || true
+      fi
     fi
     export RESULTS_DIR="${DIR}"
     export TURBOQUANT_ENGINE_ARGS="${COMMON_ARGS} --kv-cache-dtype ${VAR}"
@@ -179,8 +184,8 @@ run_workload() {
   done
   unset SKIP_VANILLA
 
-  # 3) comparison
-  if [[ "${DRY_RUN}" != "1" && ${#variant_args[@]} -gt 0 ]]; then
+  # 3) comparison — only when a vanilla baseline is available
+  if [[ "${DRY_RUN}" != "1" && ${#variant_args[@]} -gt 0 && -n "${VAN_DIR}" ]]; then
     TS=$(date -u '+%Y%m%dT%H%M%SZ')
     local CMP="${OUT_ROOT}/comparison_${name}_${TS}"
     if "${PYTHON_BIN}" "${SCRIPT_DIR}/compare.py" \
@@ -192,6 +197,8 @@ run_workload() {
     else
       echo "  WARN: comparison failed for ${name}"
     fi
+  elif [[ -z "${VAN_DIR}" ]]; then
+    echo "  Skipping comparison for ${name}: no vanilla baseline available."
   fi
 }
 
